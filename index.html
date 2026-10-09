@@ -1368,9 +1368,16 @@ function renderPanel(v) {
   });
   const mv = $('moves');
   mv.innerHTML = parts.join('<br>');
+  // Cuộn ô biên bản tới nước đang xem. Không dùng scrollIntoView vì nó cuộn cả
+  // trang (trên màn hình hẹp, mỗi nước đi sẽ kéo trang xuống chỗ biên bản).
   const curEl = mv.querySelector('.mv.cur');
-  if (curEl && n) curEl.scrollIntoView({ block: 'nearest' });
-  else mv.scrollTop = mv.scrollHeight;
+  if (curEl) {
+    const r = curEl.getBoundingClientRect(), c = mv.getBoundingClientRect();
+    if (r.top < c.top) mv.scrollTop += r.top - c.top;
+    else if (r.bottom > c.bottom) mv.scrollTop += r.bottom - c.bottom;
+  } else {
+    mv.scrollTop = mv.scrollHeight;
+  }
 }
 // Toạ độ hiển thị: cột a..i (trái sang phải), hàng 1..10 từ phía Đỏ
 const coord = i => 'abcdefghi'[colOf(i)] + (10 - rowOf(i));
