@@ -109,12 +109,15 @@
 
   .controls { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
   .controls button { padding: 10px 8px; white-space: nowrap; }
-  #btnSound { padding: 10px 12px; font-size: 1rem; }
+  #btnSound { padding: 10px 12px; }
   #btnSound.off { opacity: .55; }
   button {
     font: inherit; font-weight: 600; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--card-border);
     background: rgba(255, 255, 255, .06); color: var(--text); cursor: pointer; transition: all .15s;
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   }
+  /* Icon SVG trong nút: vẽ bằng nét, lấy màu chữ hiện tại (xem ICONS trong khối ui) */
+  button svg.ic { width: 1.15em; height: 1.15em; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
   button:hover { background: rgba(255, 255, 255, .11); transform: translateY(-1px); }
   button:active { transform: translateY(0); }
   button:disabled { opacity: .4; cursor: default; transform: none; }
@@ -137,7 +140,8 @@
   .moves .mv.cur { background: rgba(224, 185, 100, .2); color: var(--gold); }
   .moves .mv.red { color: #ef9a9a; } .moves .mv.black { color: #ddd; }
   .nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
-  .nav button { padding: 6px 4px; font-size: .9rem; }
+  .nav button { padding: 7px 4px; }
+  .nav button svg.ic { width: 1.25em; height: 1.25em; }
   .moves::-webkit-scrollbar { width: 6px; } .moves::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .15); border-radius: 3px; }
   footer { text-align: center; color: var(--muted); font-size: .75rem; }
 
@@ -210,9 +214,9 @@
 
       <div class="card">
         <div class="controls">
-          <button class="primary" id="btnNew">⟳ Ván mới</button>
-          <button id="btnUndo">↶ Đi lại</button>
-          <button id="btnSound" title="Bật/tắt âm thanh">🔊</button>
+          <button class="primary" id="btnNew" data-icon="new">Ván mới</button>
+          <button id="btnUndo" data-icon="undo">Đi lại</button>
+          <button id="btnSound" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh"></button>
         </div>
         <div class="field" style="margin-top:12px">
           <label>Chế độ chơi</label>
@@ -236,10 +240,10 @@
           <label>Biên bản</label>
           <div class="moves" id="moves"></div>
           <div class="nav" id="nav">
-            <button data-nav="first" title="Về đầu ván (Home)">⏮</button>
-            <button data-nav="prev" title="Lùi một nước (←)">◀</button>
-            <button data-nav="next" title="Tiến một nước (→)">▶</button>
-            <button data-nav="last" title="Về thế hiện tại (End)">⏭</button>
+            <button data-nav="first" data-icon="first" title="Về đầu ván (Home)" aria-label="Về đầu ván"></button>
+            <button data-nav="prev" data-icon="prev" title="Lùi một nước (←)" aria-label="Lùi một nước"></button>
+            <button data-nav="next" data-icon="next" title="Tiến một nước (→)" aria-label="Tiến một nước"></button>
+            <button data-nav="last" data-icon="last" title="Về thế hiện tại (End)" aria-label="Về thế hiện tại"></button>
           </div>
         </div>
       </div>
@@ -874,6 +878,25 @@ const PIECE_NAME_VI = {
 const COLOR_NAME = { [RED]: 'Đỏ', [BLACK]: 'Đen' };
 const COLOR_HEX = { [RED]: '#c62828', [BLACK]: '#1f1f1f' };
 
+// ---- Icon SVG cho nút --------------------------------------------------------
+// Vẽ bằng nét trên lưới 24x24, màu theo currentColor (CSS button svg.ic). Dùng
+// SVG thay ký tự Unicode/emoji để hiển thị giống nhau trên mọi hệ điều hành
+// (iOS vẽ ⏮ ◀ 🔊 thành emoji màu). Nút có data-icon được chèn icon lúc khởi tạo.
+const ICONS = {
+  new: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  soundOn: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>',
+  soundOff: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>',
+  first: '<path d="M19 20 9 12l10-8z"/><path d="M5 19V5"/>',
+  prev: '<path d="m15 18-6-6 6-6"/>',
+  next: '<path d="m9 18 6-6-6-6"/>',
+  last: '<path d="m5 4 10 8-10 8z"/><path d="M19 5v14"/>',
+};
+const icon = name => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+function initIcons() {
+  for (const b of document.querySelectorAll('button[data-icon]')) b.insertAdjacentHTML('afterbegin', icon(b.dataset.icon));
+}
+
 // ---- Âm thanh (Web Audio API, tổng hợp trực tiếp, không cần file) ----------
 const Sound = {
   enabled: true,
@@ -1322,7 +1345,8 @@ function renderPanel(v) {
 
   // Nút & lựa chọn
   $('btnUndo').disabled = game.history.length === 0;
-  $('btnSound').textContent = Sound.enabled ? '🔊' : '🔇';
+  const sndIcon = Sound.enabled ? 'soundOn' : 'soundOff';
+  if ($('btnSound').dataset.icon !== sndIcon) { $('btnSound').dataset.icon = sndIcon; $('btnSound').innerHTML = icon(sndIcon); }
   $('btnSound').classList.toggle('off', !Sound.enabled);
   for (const b of $('segMode').children) b.classList.toggle('on', b.dataset.mode === game.mode);
   for (const b of $('segLevel').children) b.classList.toggle('on', b.dataset.level === game.level);
@@ -1549,6 +1573,7 @@ try {
   if (lv && DIFFICULTY[lv]) game.level = lv;
 } catch (e) { /* bỏ qua */ }
 
+initIcons();
 initSvg();
 Engine.start();
 newGame();
