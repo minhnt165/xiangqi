@@ -13,6 +13,7 @@ Game cờ tướng chạy trên trình duyệt, gói gọn trong một file `ind
 - Highlight nước đi hợp lệ, đánh dấu nước vừa đi, undo (kể cả khi máy đang nghĩ), ván mới, đổi chế độ.
 - Xem lại ván: bấm vào nước trong biên bản hoặc dùng nút ⏮ ◀ ▶ ⏭ (phím Home / ← / → / End).
 - Responsive, chơi được trên điện thoại và máy tính.
+- Icon tab đổi theo trạng thái ván (đến lượt bạn, máy đang nghĩ, bị chiếu, thắng / thua / hòa), tiêu đề tab đổi theo. Có icon màn hình chính cho iOS (`icon-180.png`) và Android (`manifest.webmanifest`).
 
 ## Chạy
 
@@ -25,6 +26,14 @@ node test.js
 ```
 
 Trích hai khối `rules` và `ai` từ `index.html` để chạy perft, kiểm tra Zobrist hash, luật lặp / hòa và AI (giới hạn thời gian, tìm nước thắng, tránh chiếu mãi).
+
+## Tạo lại icon
+
+Các file `icon-*.png` và `favicon-32.png` được vẽ từ hàm `Favicon.svg()` trong `index.html`. Sau khi sửa hình icon, chạy (cần Google Chrome và `npm i playwright-core`):
+
+```
+node tools/make-icons.js
+```
 
 ## Cấu trúc mã
 
