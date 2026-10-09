@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Cờ Tướng - Xiangqi</title>
+<style>
+  :root {
+    --bg: #1e2328;
+    --panel: #2a3138;
+    --text: #ece9e4;
+    --muted: #9ba5ae;
+    --red: #c62828;
+    --black: #1a1a1a;
+    --accent: #43a047;
+    --warn: #ffb300;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  .app { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px; max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: .5px; }
+  h1 small { font-weight: 400; color: var(--muted); font-size: .85rem; margin-left: 6px; }
+  .layout { display: flex; gap: 16px; width: 100%; justify-content: center; align-items: flex-start; }
+  .board-wrap { width: min(100%, 540px, calc((100vh - 120px) * 560 / 620)); flex: 0 0 auto; }
+  svg { display: block; width: 100%; height: auto; touch-action: manipulation; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.45); }
+  .panel { display: flex; flex-direction: column; gap: 12px; background: var(--panel); padding: 14px; border-radius: 12px; width: 260px; flex: 0 0 auto; }
+  .status { font-size: 1.05rem; font-weight: 600; min-height: 1.6em; line-height: 1.4; }
+  .status .check { color: var(--warn); }
+  .status .over { color: #81c784; }
+  .status .thinking { color: var(--muted); font-weight: 400; font-size: .9rem; }
+  .turn-dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 2px solid #f6e3b4; }
+  .turn-dot.red { background: var(--red); }
+  .turn-dot.black { background: var(--black); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  label { font-size: .8rem; color: var(--muted); }
+  button, select {
+    font: inherit; padding: 9px 12px; border-radius: 8px; border: 1px solid #4a535c;
+    background: #3a434c; color: var(--text); cursor: pointer; width: 100%;
+  }
+  button:hover { background: #4a545e; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: #4caf50; }
+  .moves { font-size: .82rem; color: var(--muted); max-height: 180px; overflow: auto; line-height: 1.55; border-top: 1px solid #3a434c; padding-top: 8px; }
+  .moves b { color: var(--text); }
+  .hint { font-size: .75rem; color: var(--muted); }
+  @media (max-width: 760px) {
+    .layout { flex-direction: column; align-items: center; }
+    .board-wrap { width: min(100%, 540px); }
+    .panel { width: min(100%, 540px); }
+    .moves { max-height: 110px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Cờ Tướng <small>Xiangqi</small></h1>
+  <div class="layout">
+    <div class="board-wrap"><svg id="board" viewBox="0 0 560 620" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <div class="panel">
+      <div class="status" id="status"></div>
+      <div class="row">
+        <button class="primary" id="btnNew">Ván mới</button>
+        <button id="btnUndo">Đi lại</button>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Chế độ chơi</label>
+          <button id="btnMode">Đổi chế độ</button>
+        </div>
+        <div class="field">
+          <label>Độ khó (máy)</label>
+          <select id="selLevel">
+            <option value="easy">Dễ</option>
+            <option value="medium" selected>Vừa</option>
+            <option value="hard">Khó</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint" id="modeHint"></div>
+      <div class="moves" id="moves"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- PHẦN 1: LUẬT CỜ (RULES) - thuần logic, không phụ thuộc DOM            -->
+<!-- ===================================================================== -->
+<script id="rules">
+'use strict';
+
+// ---- Hằng số bàn cờ ------------------------------------------------------
+// Bàn cờ 10 hàng x 9 cột. Hàng 0 ở trên (phía Đen), hàng 9 ở dưới (phía Đỏ).
+// Ô được lưu trong mảng phẳng 90 phần tử, chỉ số = hàng * 9 + cột.
+const ROWS = 10, COLS = 9, SQ = ROWS * COLS;
+const RED = 0, BLACK = 1;
+
+// Loại quân. Mã quân = (màu << 3) | loại; 0 là ô trống.
+const EMPTY = 0, KING = 1, ADVISOR = 2, ELEPHANT = 3, HORSE = 4, ROOK = 5, CANNON = 6, PAWN = 7;
+
+const makePiece = (color, type) => (color << 3) | type;
+const colorOf = p => p >> 3;
+const typeOf = p => p & 7;
+const idx = (r, c) => r * COLS + c;
+const rowOf = i => (i / COLS) | 0;
+const colOf = i => i % COLS;
+
+const inBoard = (r, c) => r >= 0 && r < ROWS && c >= 0 && c < COLS;
+// Cung tướng: cột 3..5, hàng 7..9 (Đỏ) hoặc 0..2 (Đen)
+const inPalace = (r, c, color) => c >= 3 && c <= 5 && (color === RED ? r >= 7 : r <= 2);
+// Phần sân nhà: Đỏ là hàng 5..9, Đen là hàng 0..4
+const onOwnSide = (r, color) => (color === RED ? r >= 5 : r <= 4);
+const crossedRiver = (r, color) => !onOwnSide(r, color);
+// Hướng tiến của Tốt: Đỏ đi lên (hàng giảm), Đen đi xuống (hàng tăng)
+const forwardDir = color => (color === RED ? -1 : 1);
+
+const ORTHO = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+const DIAG = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+const HORSE_D = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
+
+// Thế cờ ban đầu. Chữ hoa = Đỏ, chữ thường = Đen.
+// r=xe, h=mã, e=tượng, a=sĩ, k=tướng, c=pháo, p=tốt
+const INITIAL_LAYOUT = [
+  'rheakaehr',
+  '.........',
+  '.c.....c.',
+  'p.p.p.p.p',
+  '.........',
+  '.........',
+  'P.P.P.P.P',
+  '.C.....C.',
+  '.........',
+  'RHEAKAEHR',
+];
+const CHAR_TYPE = { k: KING, a: ADVISOR, e: ELEPHANT, h: HORSE, r: ROOK, c: CANNON, p: PAWN };
+
+function createInitialBoard() {
+  const b = new Array(SQ).fill(EMPTY);
+  INITIAL_LAYOUT.forEach((row, r) => {
+    for (let c = 0; c < COLS; c++) {
+      const ch = row[c];
+      if (ch === '.') continue;
+      const color = ch === ch.toUpperCase() ? RED : BLACK;
+      b[idx(r, c)] = makePiece(color, CHAR_TYPE[ch.toLowerCase()]);
+    }
+  });
+  return b;
+}
+
+// ---- Thực hiện / hoàn tác nước đi ---------------------------------------
+// Nước đi là object { from, to }. makeMove trả về quân bị ăn để unmakeMove dùng lại.
+function makeMove(b, m) {
+  const captured = b[m.to];
+  b[m.to] = b[m.from];
+  b[m.from] = EMPTY;
+  return captured;
+}
+function unmakeMove(b, m, captured) {
+  b[m.from] = b[m.to];
+  b[m.to] = captured;
+}
+
+// ---- Sinh nước đi giả định (pseudo-legal) --------------------------------
+// Sinh theo luật di chuyển từng quân, CHƯA xét việc tướng mình có bị chiếu.
+// Riêng Tướng có thêm "nước ăn Tướng đối phương" khi hai tướng đối mặt trên
+// cột trống: nước này chỉ dùng cho AI (để xử lý luật đối mặt), hàm
+// genLegalMoves sẽ loại bỏ mọi nước ăn Tướng.
+function genPseudoMoves(b, color) {
+  const moves = [];
+  for (let from = 0; from < SQ; from++) {
+    const p = b[from];
+    if (p === EMPTY || colorOf(p) !== color) continue;
+    const r = rowOf(from), c = colOf(from), t = typeOf(p);
+
+    // Thêm nước đi tới (tr,tc) nếu ô trống hoặc có quân đối phương
+    const add = (tr, tc) => {
+      if (!inBoard(tr, tc)) return;
+      const to = idx(tr, tc), q = b[to];
+      if (q === EMPTY || colorOf(q) !== color) moves.push({ from, to });
+    };
+
+    switch (t) {
+      case KING: {
+        // Tướng: đi 1 bước ngang/dọc, không ra khỏi cung
+        for (const [dr, dc] of ORTHO) {
+          const tr = r + dr, tc = c + dc;
+          if (inPalace(tr, tc, color)) add(tr, tc);
+        }
+        // Hai tướng đối mặt: coi như Tướng "ăn" được Tướng kia theo cột trống
+        const dir = forwardDir(color);
+        for (let tr = r + dir; tr >= 0 && tr < ROWS; tr += dir) {
+          const q = b[idx(tr, c)];
+          if (q !== EMPTY) {
+            if (typeOf(q) === KING && colorOf(q) !== color) moves.push({ from, to: idx(tr, c) });
+            break;
+          }
+        }
+        break;
+      }
+      case ADVISOR:
+        // Sĩ: đi chéo 1 bước, trong cung
+        for (const [dr, dc] of DIAG) {
+          const tr = r + dr, tc = c + dc;
+          if (inPalace(tr, tc, color)) add(tr, tc);
+        }
+        break;
+      case ELEPHANT:
+        // Tượng: đi chéo 2 bước, không qua sông, bị cản nếu "mắt tượng" có quân
+        for (const [dr, dc] of DIAG) {
+          const tr = r + 2 * dr, tc = c + 2 * dc;
+          if (!inBoard(tr, tc) || !onOwnSide(tr, color)) continue;
+          if (b[idx(r + dr, c + dc)] !== EMPTY) continue; // mắt tượng bị cản
+          add(tr, tc);
+        }
+        break;
+      case HORSE:
+        // Mã: đi chữ nhật, bị cản nếu ô kề theo hướng dài ("chân mã") có quân
+        for (const [dr, dc] of HORSE_D) {
+          const legR = r + (Math.abs(dr) === 2 ? dr / 2 : 0);
+          const legC = c + (Math.abs(dc) === 2 ? dc / 2 : 0);
+          if (!inBoard(legR, legC) || b[idx(legR, legC)] !== EMPTY) continue; // chân mã bị cản
+          add(r + dr, c + dc);
+        }
+        break;
+      case ROOK:
+        // Xe: đi thẳng tuỳ ý, dừng khi gặp quân (ăn nếu là quân địch)
+        for (const [dr, dc] of ORTHO) {
+          for (let tr = r + dr, tc = c + dc; inBoard(tr, tc); tr += dr, tc += dc) {
+            const q = b[idx(tr, tc)];
+            if (q === EMPTY) { moves.push({ from, to: idx(tr, tc) }); continue; }
+            if (colorOf(q) !== color) moves.push({ from, to: idx(tr, tc) });
+            break;
+          }
+        }
+        break;
+      case CANNON:
+        // Pháo: đi như Xe khi không ăn; ăn quân phải nhảy qua đúng 1 quân (ngòi)
+        for (const [dr, dc] of ORTHO) {
+          let screen = false;
+          for (let tr = r + dr, tc = c + dc; inBoard(tr, tc); tr += dr, tc += dc) {
+            const q = b[idx(tr, tc)];
+            if (!screen) {
+              if (q === EMPTY) moves.push({ from, to: idx(tr, tc) });
+              else screen = true; // gặp ngòi
+            } else if (q !== EMPTY) {
+              if (colorOf(q) !== color) moves.push({ from, to: idx(tr, tc) });
+              break;
+            }
+          }
+        }
+        break;
+      case PAWN: {
+        // Tốt: chỉ tiến; sau khi qua sông được đi ngang; không bao giờ lùi
+        const dir = forwardDir(color);
+        add(r + dir, c);
+        if (crossedRiver(r, color)) { add(r, c - 1); add(r, c + 1); }
+        break;
+      }
+    }
+  }
+  return moves;
+}
+
+// ---- Kiểm tra chiếu --------------------------------------------------------
+function findKing(b, color) {
+  const want = makePiece(color, KING);
+  const r0 = color === RED ? 7 : 0;
+  for (let r = r0; r < r0 + 3; r++)
+    for (let c = 3; c <= 5; c++)
+      if (b[idx(r, c)] === want) return idx(r, c);
+  return -1;
+}
+
+// Tướng của `color` có đang bị tấn công không? (gồm cả luật hai tướng đối mặt)
+function isInCheck(b, color) {
+  const k = findKing(b, color);
+  if (k < 0) return true; // không còn tướng
+  const kr = rowOf(k), kc = colOf(k), enemy = 1 - color;
+
+  // Xe / Tướng đối mặt (quân đầu tiên gặp) và Pháo (quân thứ hai, sau 1 ngòi)
+  for (const [dr, dc] of ORTHO) {
+    let count = 0;
+    for (let r = kr + dr, c = kc + dc; inBoard(r, c); r += dr, c += dc) {
+      const q = b[idx(r, c)];
+      if (q === EMPTY) continue;
+      count++;
+      if (colorOf(q) === enemy) {
+        const t = typeOf(q);
+        if (count === 1 && (t === ROOK || t === KING)) return true;
+        if (count === 2 && t === CANNON) return true;
+      }
+      if (count >= 2) break;
+    }
+  }
+  // Mã: mã địch ở vị trí chữ nhật so với tướng, và chân mã (ô kề mã về phía tướng) trống
+  for (const [dr, dc] of HORSE_D) {
+    const hr = kr + dr, hc = kc + dc;
+    if (!inBoard(hr, hc) || b[idx(hr, hc)] !== makePiece(enemy, HORSE)) continue;
+    const legR = hr - (Math.abs(dr) === 2 ? dr / 2 : 0);
+    const legC = hc - (Math.abs(dc) === 2 ? dc / 2 : 0);
+    if (b[idx(legR, legC)] === EMPTY) return true;
+  }
+  // Tốt địch: đứng ngay trước mặt tướng (theo hướng tiến của tốt), hoặc kề ngang nếu đã qua sông
+  const ep = makePiece(enemy, PAWN), ed = forwardDir(enemy);
+  if (inBoard(kr - ed, kc) && b[idx(kr - ed, kc)] === ep) return true;
+  if (crossedRiver(kr, enemy)) {
+    if (inBoard(kr, kc - 1) && b[idx(kr, kc - 1)] === ep) return true;
+    if (inBoard(kr, kc + 1) && b[idx(kr, kc + 1)] === ep) return true;
+  }
+  return false;
+}
+
+// ---- Nước đi hợp lệ -------------------------------------------------------
+// Lọc nước giả định: bỏ nước ăn Tướng, bỏ nước làm tướng mình bị chiếu.
+function genLegalMoves(b, color) {
+  const out = [];
+  for (const m of genPseudoMoves(b, color)) {
+    if (typeOf(b[m.to]) === KING) continue;
+    const cap = makeMove(b, m);
+    const ok = !isInCheck(b, color);
+    unmakeMove(b, m, cap);
+    if (ok) out.push(m);
+  }
+  return out;
+}
+
+// Trạng thái ván cờ cho bên sắp đi: chiếu, hết nước (chiếu bí / bí nước)
+function getGameStatus(b, color) {
+  const inCheck = isInCheck(b, color);
+  const legal = genLegalMoves(b, color);
+  if (legal.length === 0) {
+    return { over: true, inCheck, winner: 1 - color, reason: inCheck ? 'checkmate' : 'stalemate', legal };
+  }
+  return { over: false, inCheck, winner: null, reason: null, legal };
+}
+</script>
+
+<!-- ===================================================================== -->
+<!-- PHẦN 2: AI - Minimax (negamax) + alpha-beta + tìm kiếm tĩnh           -->
+<!-- ===================================================================== -->
+<script id="ai">
+'use strict';
+
+const INF = 1e9;
+const MATE = 100000;
+
+// Giá trị dùng để sắp xếp nước đi (MVV-LVA), không phải giá trị lượng giá
+const ORDER_VALUE = [0, 10000, 20, 20, 90, 200, 100, 10];
+
+// Bảng điểm vị trí (piece-square table) nhìn từ phía Đỏ (Đỏ ở dưới, hàng 9).
+// Điểm đã gồm cả giá trị quân. Quân Đen dùng bảng lật theo hàng (9 - r).
+const PST = {
+  [KING]: [
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 1, 1, 1, 0, 0, 0,
+    0, 0, 0, 2, 2, 2, 0, 0, 0,
+    0, 0, 0, 11, 15, 11, 0, 0, 0,
+  ],
+  [ADVISOR]: [
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 20, 0, 20, 0, 0, 0,
+    0, 0, 0, 0, 23, 0, 0, 0, 0,
+    0, 0, 0, 20, 0, 20, 0, 0, 0,
+  ],
+  [ELEPHANT]: [
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 20, 0, 0, 0, 20, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    18, 0, 0, 0, 23, 0, 0, 0, 18,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 20, 0, 0, 0, 20, 0, 0,
+  ],
+  [HORSE]: [
+    90, 90, 90, 96, 90, 96, 90, 90, 90,
+    90, 96, 103, 97, 94, 97, 103, 96, 90,
+    92, 98, 99, 103, 99, 103, 99, 98, 92,
+    93, 108, 100, 107, 100, 107, 100, 108, 93,
+    90, 100, 99, 103, 104, 103, 99, 100, 90,
+    90, 98, 101, 102, 103, 102, 101, 98, 90,
+    92, 94, 98, 95, 98, 95, 98, 94, 92,
+    93, 92, 94, 95, 92, 95, 94, 92, 93,
+    85, 90, 92, 93, 78, 93, 92, 90, 85,
+    88, 85, 90, 88, 90, 88, 90, 85, 88,
+  ],
+  [ROOK]: [
+    206, 208, 207, 213, 214, 213, 207, 208, 206,
+    206, 212, 209, 216, 233, 216, 209, 212, 206,
+    206, 208, 207, 214, 216, 214, 207, 208, 206,
+    206, 213, 213, 216, 216, 216, 213, 213, 206,
+    208, 211, 211, 214, 215, 214, 211, 211, 208,
+    208, 212, 212, 214, 215, 214, 212, 212, 208,
+    204, 209, 204, 212, 214, 212, 204, 209, 204,
+    198, 208, 204, 212, 212, 212, 204, 208, 198,
+    200, 208, 206, 212, 200, 212, 206, 208, 200,
+    194, 206, 204, 212, 200, 212, 204, 206, 194,
+  ],
+  [CANNON]: [
+    100, 100, 96, 91, 90, 91, 96, 100, 100,
+    98, 98, 96, 92, 89, 92, 96, 98, 98,
+    97, 97, 96, 91, 92, 91, 96, 97, 97,
+    96, 99, 99, 98, 100, 98, 99, 99, 96,
+    96, 96, 96, 96, 100, 96, 96, 96, 96,
+    95, 96, 99, 96, 100, 96, 99, 96, 95,
+    96, 96, 96, 96, 96, 96, 96, 96, 96,
+    97, 96, 100, 99, 101, 99, 100, 96, 97,
+    96, 97, 98, 98, 98, 98, 98, 97, 96,
+    96, 96, 97, 99, 99, 99, 97, 96, 96,
+  ],
+  [PAWN]: [
+    9, 9, 9, 11, 13, 11, 9, 9, 9,
+    19, 24, 34, 42, 44, 42, 34, 24, 19,
+    19, 24, 32, 37, 37, 37, 32, 24, 19,
+    19, 23, 27, 29, 30, 29, 27, 23, 19,
+    14, 18, 20, 27, 29, 27, 20, 18, 14,
+    7, 0, 13, 0, 16, 0, 13, 0, 7,
+    7, 0, 7, 0, 15, 0, 7, 0, 7,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+  ],
+};
+
+// Lượng giá thế cờ theo góc nhìn của bên `color` (dương = có lợi cho `color`)
+function evaluate(b, color) {
+  let red = 0, black = 0;
+  for (let i = 0; i < SQ; i++) {
+    const p = b[i];
+    if (p === EMPTY) continue;
+    const table = PST[typeOf(p)];
+    if (colorOf(p) === RED) red += table[i];
+    else black += table[idx(9 - rowOf(i), colOf(i))]; // lật bảng cho Đen
+  }
+  const score = red - black;
+  return color === RED ? score : -score;
+}
+
+// Sắp xếp: nước ăn quân giá trị cao bằng quân giá trị thấp đi trước (MVV-LVA)
+function orderMoves(b, moves) {
+  for (const m of moves) {
+    const cap = b[m.to];
+    m.score = cap === EMPTY ? 0 : ORDER_VALUE[typeOf(cap)] * 10 - ORDER_VALUE[typeOf(b[m.from])];
+  }
+  moves.sort((x, y) => y.score - x.score);
+}
+
+let nodeCount = 0;
+const QUIESCE_MAX = 6;
+
+// Tìm kiếm tĩnh: chỉ xét các nước ăn quân để tránh "hiệu ứng chân trời"
+function quiesce(b, color, alpha, beta, ply, qdepth) {
+  nodeCount++;
+  const stand = evaluate(b, color);
+  if (stand >= beta) return stand;
+  if (qdepth >= QUIESCE_MAX) return stand;
+  if (stand > alpha) alpha = stand;
+
+  const moves = genPseudoMoves(b, color).filter(m => b[m.to] !== EMPTY);
+  orderMoves(b, moves);
+  for (const m of moves) {
+    if (typeOf(b[m.to]) === KING) return MATE - ply; // ăn được Tướng
+    const cap = makeMove(b, m);
+    const score = -quiesce(b, 1 - color, -beta, -alpha, ply + 1, qdepth + 1);
+    unmakeMove(b, m, cap);
+    if (score >= beta) return score;
+    if (score > alpha) alpha = score;
+  }
+  return alpha;
+}
+
+// Negamax + alpha-beta trên nước giả định. Nước để tướng bị ăn sẽ bị
+// trừng phạt ở ply kế tiếp (đối phương ăn Tướng = MATE), nên không cần lọc
+// hợp lệ trong cây tìm kiếm (tiết kiệm nhiều thời gian).
+function search(b, color, depth, alpha, beta, ply) {
+  if (depth <= 0) return quiesce(b, color, alpha, beta, ply, 0);
+  nodeCount++;
+  const moves = genPseudoMoves(b, color);
+  orderMoves(b, moves);
+  let best = -INF;
+  for (const m of moves) {
+    if (typeOf(b[m.to]) === KING) return MATE - ply;
+    const cap = makeMove(b, m);
+    const score = -search(b, 1 - color, depth - 1, -beta, -alpha, ply + 1);
+    unmakeMove(b, m, cap);
+    if (score > best) best = score;
+    if (best > alpha) alpha = best;
+    if (alpha >= beta) break;
+  }
+  return best;
+}
+
+// Chọn nước đi tốt nhất cho `color` với độ sâu `depth`.
+// Nước ở gốc là nước hợp lệ thật sự; các nước bằng điểm được chọn ngẫu nhiên.
+function findBestMove(board, color, depth) {
+  const b = board.slice();
+  const moves = genLegalMoves(b, color);
+  if (moves.length === 0) return null;
+  for (let i = moves.length - 1; i > 0; i--) { // xáo trộn để đa dạng
+    const j = (Math.random() * (i + 1)) | 0;
+    [moves[i], moves[j]] = [moves[j], moves[i]];
+  }
+  orderMoves(b, moves);
+  nodeCount = 0;
+  let bestMove = moves[0], bestScore = -INF;
+  for (const m of moves) {
+    const cap = makeMove(b, m);
+    const score = -search(b, 1 - color, depth - 1, -INF, -bestScore, 1);
+    unmakeMove(b, m, cap);
+    if (score > bestScore) { bestScore = score; bestMove = m; }
+  }
+  return { move: bestMove, score: bestScore, nodes: nodeCount };
+}
+
+// Độ sâu tìm kiếm theo mức độ khó
+const DIFFICULTY_DEPTH = { easy: 1, medium: 2, hard: 4 };
+</script>
+
+<!-- ===================================================================== -->
+<!-- PHẦN 3: GIAO DIỆN (UI) - vẽ SVG, xử lý click, điều khiển ván cờ        -->
+<!-- ===================================================================== -->
+<script id="ui">
+'use strict';
+
+const CELL = 60, PAD = 40; // kích thước ô và lề trong viewBox 560x620
+const sx = c => PAD + c * CELL;
+const sy = r => PAD + r * CELL;
+
+const PIECE_CHAR = {
+  [RED]:   { [KING]: '帥', [ADVISOR]: '仕', [ELEPHANT]: '相', [HORSE]: '馬', [ROOK]: '車', [CANNON]: '炮', [PAWN]: '兵' },
+  [BLACK]: { [KING]: '將', [ADVISOR]: '士', [ELEPHANT]: '象', [HORSE]: '馬', [ROOK]: '車', [CANNON]: '砲', [PAWN]: '卒' },
+};
+const PIECE_NAME_VI = {
+  [RED]:   { [KING]: 'Tướng', [ADVISOR]: 'Sĩ', [ELEPHANT]: 'Tượng', [HORSE]: 'Mã', [ROOK]: 'Xe', [CANNON]: 'Pháo', [PAWN]: 'Binh' },
+  [BLACK]: { [KING]: 'Tướng', [ADVISOR]: 'Sĩ', [ELEPHANT]: 'Tượng', [HORSE]: 'Mã', [ROOK]: 'Xe', [CANNON]: 'Pháo', [PAWN]: 'Tốt' },
+};
+const COLOR_NAME = { [RED]: 'Đỏ', [BLACK]: 'Đen' };
+
+// ---- Trạng thái ván cờ ----------------------------------------------------
+const game = {
+  board: null,
+  turn: RED,
+  history: [],      // [{ move, captured, piece }]
+  mode: 'ai',       // 'ai' (người Đỏ vs máy Đen) | 'pvp' (2 người)
+  level: 'medium',
+  selected: null,   // ô đang chọn
+  legalForSelected: [],
+  status: null,     // kết quả getGameStatus cho bên sắp đi
+  thinking: false,
+};
+
+const $ = id => document.getElementById(id);
+const svg = $('board');
+
+function newGame() {
+  game.board = createInitialBoard();
+  game.turn = RED;
+  game.history = [];
+  game.selected = null;
+  game.legalForSelected = [];
+  game.thinking = false;
+  refreshStatus();
+  render();
+  maybeAiMove();
+}
+
+function refreshStatus() {
+  game.status = getGameStatus(game.board, game.turn);
+}
+
+// ---- Vẽ bàn cờ ------------------------------------------------------------
+function boardMarkup() {
+  let s = '';
+  s += `<rect x="0" y="0" width="560" height="620" rx="10" fill="#c9a062"/>`;
+  s += `<rect x="12" y="12" width="536" height="596" rx="6" fill="#e8c98e"/>`;
+  s += `<rect x="${sx(0)}" y="${sy(0)}" width="${8 * CELL}" height="${9 * CELL}" fill="none" stroke="#4a3012" stroke-width="3"/>`;
+  // Đường ngang
+  for (let r = 0; r < ROWS; r++) s += line(sx(0), sy(r), sx(8), sy(r));
+  // Đường dọc: cột biên liền, cột giữa ngắt ở sông
+  for (let c = 1; c < 8; c++) {
+    s += line(sx(c), sy(0), sx(c), sy(4));
+    s += line(sx(c), sy(5), sx(c), sy(9));
+  }
+  // Cung tướng
+  s += line(sx(3), sy(0), sx(5), sy(2)); s += line(sx(5), sy(0), sx(3), sy(2));
+  s += line(sx(3), sy(7), sx(5), sy(9)); s += line(sx(5), sy(7), sx(3), sy(9));
+  // Sông
+  const ry = (sy(4) + sy(5)) / 2;
+  const riverFont = `font-size="26" fill="#6b4a1e" text-anchor="middle" dominant-baseline="central" font-family="KaiTi,STKaiti,'Noto Serif CJK SC',serif" letter-spacing="8"`;
+  s += `<text x="${sx(2)}" y="${ry}" ${riverFont}>楚 河</text>`;
+  s += `<text x="${sx(6)}" y="${ry}" ${riverFont}>漢 界</text>`;
+  // Dấu vị trí Pháo và Tốt
+  const marks = [[2, 1], [2, 7], [7, 1], [7, 7], [3, 0], [3, 2], [3, 4], [3, 6], [3, 8], [6, 0], [6, 2], [6, 4], [6, 6], [6, 8]];
+  for (const [r, c] of marks) s += cornerMark(r, c);
+  return s;
+}
+function line(x1, y1, x2, y2) {
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#4a3012" stroke-width="1.6"/>`;
+}
+function cornerMark(r, c) {
+  const x = sx(c), y = sy(r), g = 4, l = 9;
+  let s = '';
+  const quad = (dx, dy) => {
+    s += `<path d="M${x + dx * g} ${y + dy * (g + l)} L${x + dx * g} ${y + dy * g} L${x + dx * (g + l)} ${y + dy * g}" fill="none" stroke="#4a3012" stroke-width="1.4"/>`;
+  };
+  if (c > 0) { quad(-1, -1); quad(-1, 1); }
+  if (c < 8) { quad(1, -1); quad(1, 1); }
+  return s;
+}
+
+function render() {
+  const b = game.board;
+  const last = game.history.length ? game.history[game.history.length - 1].move : null;
+  let s = boardMarkup();
+
+  // Đánh dấu nước vừa đi
+  if (last) {
+    s += `<rect x="${sx(colOf(last.from)) - 27}" y="${sy(rowOf(last.from)) - 27}" width="54" height="54" rx="6" fill="rgba(33,150,243,.18)" stroke="#1e88e5" stroke-width="2" stroke-dasharray="6 4"/>`;
+    s += `<circle cx="${sx(colOf(last.to))}" cy="${sy(rowOf(last.to))}" r="30" fill="none" stroke="#1e88e5" stroke-width="3"/>`;
+  }
+  // Ô đang chọn
+  if (game.selected !== null) {
+    s += `<circle cx="${sx(colOf(game.selected))}" cy="${sy(rowOf(game.selected))}" r="30" fill="none" stroke="#ffb300" stroke-width="4"/>`;
+  }
+  // Quân cờ
+  const pieceFont = `font-family="KaiTi,STKaiti,'Noto Serif CJK SC','Microsoft YaHei',serif" font-weight="700"`;
+  for (let i = 0; i < SQ; i++) {
+    const p = b[i];
+    if (p === EMPTY) continue;
+    const color = colorOf(p), fill = color === RED ? '#c62828' : '#1a1a1a';
+    const inCheck = typeOf(p) === KING && color === game.turn && game.status && game.status.inCheck;
+    s += `<g transform="translate(${sx(colOf(i))},${sy(rowOf(i))})">`;
+    s += `<circle r="27" fill="#2b1a08" opacity=".35" cx="2" cy="3"/>`;
+    s += `<circle r="26" fill="${inCheck ? '#ffcdd2' : '#f7e4b7'}" stroke="${fill}" stroke-width="2.5"/>`;
+    s += `<circle r="21.5" fill="none" stroke="${fill}" stroke-width="1.2"/>`;
+    s += `<text font-size="27" fill="${fill}" text-anchor="middle" dominant-baseline="central" ${pieceFont} y="1">${PIECE_CHAR[color][typeOf(p)]}</text>`;
+    s += `</g>`;
+  }
+  // Gợi ý nước đi hợp lệ
+  for (const m of game.legalForSelected) {
+    const x = sx(colOf(m.to)), y = sy(rowOf(m.to));
+    if (b[m.to] === EMPTY) s += `<circle cx="${x}" cy="${y}" r="9" fill="#43a047" opacity=".85"/>`;
+    else s += `<circle cx="${x}" cy="${y}" r="30" fill="none" stroke="#e53935" stroke-width="4" stroke-dasharray="8 5"/>`;
+  }
+  // Lớp bắt click trong suốt phủ mọi giao điểm
+  for (let i = 0; i < SQ; i++) {
+    s += `<circle data-sq="${i}" cx="${sx(colOf(i))}" cy="${sy(rowOf(i))}" r="30" fill="transparent" style="cursor:pointer"/>`;
+  }
+  // Thông báo kết thúc ván
+  if (game.status && game.status.over) {
+    const txt = `${COLOR_NAME[game.status.winner]} thắng!`;
+    s += `<rect x="80" y="270" width="400" height="80" rx="12" fill="rgba(0,0,0,.78)"/>`;
+    s += `<text x="280" y="300" font-size="30" font-weight="700" fill="#fff" text-anchor="middle" dominant-baseline="central">${txt}</text>`;
+    s += `<text x="280" y="332" font-size="16" fill="#ddd" text-anchor="middle" dominant-baseline="central">${game.status.reason === 'checkmate' ? 'Chiếu bí' : 'Hết nước đi'}</text>`;
+  }
+  svg.innerHTML = s;
+  renderPanel();
+}
+
+function renderPanel() {
+  const st = $('status');
+  if (game.status.over) {
+    st.innerHTML = `<span class="over">${COLOR_NAME[game.status.winner]} thắng</span> · ${game.status.reason === 'checkmate' ? 'chiếu bí' : 'đối phương hết nước đi'}`;
+  } else {
+    const who = game.mode === 'ai' ? (game.turn === RED ? ' (bạn)' : ' (máy)') : '';
+    let html = `<span class="turn-dot ${game.turn === RED ? 'red' : 'black'}"></span>Lượt: ${COLOR_NAME[game.turn]}${who}`;
+    if (game.status.inCheck) html += ` · <span class="check">Chiếu tướng!</span>`;
+    if (game.thinking) html += `<div class="thinking">Máy đang suy nghĩ…</div>`;
+    st.innerHTML = html;
+  }
+  $('btnMode').textContent = game.mode === 'ai' ? 'Chơi với máy' : 'Hai người';
+  $('modeHint').textContent = game.mode === 'ai'
+    ? 'Bạn cầm quân Đỏ đi trước, máy cầm quân Đen. Bấm "Đổi chế độ" để chơi 2 người.'
+    : 'Hai người chơi lần lượt trên cùng màn hình. Bấm "Đổi chế độ" để chơi với máy.';
+  $('btnUndo').disabled = game.history.length === 0 || game.thinking;
+  $('selLevel').disabled = game.mode !== 'ai';
+
+  // Danh sách nước đi
+  const parts = [];
+  game.history.forEach((h, i) => {
+    const color = colorOf(h.piece);
+    const name = PIECE_NAME_VI[color][typeOf(h.piece)];
+    const txt = `${name} ${coord(h.move.from)}→${coord(h.move.to)}${h.captured ? ' ×' : ''}`;
+    if (i % 2 === 0) parts.push(`<b>${i / 2 + 1}.</b> ${txt}`);
+    else parts[parts.length - 1] += ` &nbsp; ${txt}`;
+  });
+  const mv = $('moves');
+  mv.innerHTML = parts.join('<br>');
+  mv.scrollTop = mv.scrollHeight;
+}
+// Toạ độ hiển thị: cột a..i (trái sang phải), hàng 1..10 từ phía Đỏ
+const coord = i => 'abcdefghi'[colOf(i)] + (10 - rowOf(i));
+
+// ---- Xử lý tương tác -----------------------------------------------------
+svg.addEventListener('click', e => {
+  const t = e.target.closest('[data-sq]');
+  if (!t) return;
+  onSquareClick(Number(t.dataset.sq));
+});
+
+function onSquareClick(sq) {
+  if (game.status.over || game.thinking) return;
+  if (game.mode === 'ai' && game.turn === BLACK) return; // lượt máy
+  const p = game.board[sq];
+
+  // Đã chọn quân: nếu bấm vào ô hợp lệ thì đi
+  if (game.selected !== null) {
+    const m = game.legalForSelected.find(x => x.to === sq);
+    if (m) { playMove(m); return; }
+    if (sq === game.selected) { clearSelection(); render(); return; }
+  }
+  // Chọn quân của bên đang đi
+  if (p !== EMPTY && colorOf(p) === game.turn) {
+    game.selected = sq;
+    game.legalForSelected = game.status.legal.filter(x => x.from === sq);
+  } else {
+    clearSelection();
+  }
+  render();
+}
+function clearSelection() { game.selected = null; game.legalForSelected = []; }
+
+function playMove(m) {
+  const piece = game.board[m.from];
+  const captured = makeMove(game.board, m);
+  game.history.push({ move: { from: m.from, to: m.to }, captured, piece });
+  game.turn = 1 - game.turn;
+  clearSelection();
+  refreshStatus();
+  render();
+  maybeAiMove();
+}
+
+function maybeAiMove() {
+  if (game.mode !== 'ai' || game.turn !== BLACK || game.status.over) return;
+  game.thinking = true;
+  renderPanel();
+  // Nhường main thread cho trình duyệt vẽ xong rồi mới tính toán
+  setTimeout(() => {
+    const depth = DIFFICULTY_DEPTH[game.level] || 2;
+    const res = findBestMove(game.board, BLACK, depth);
+    game.thinking = false;
+    if (res) playMove(res.move); else { refreshStatus(); render(); }
+  }, 60);
+}
+
+function undo() {
+  if (game.thinking || game.history.length === 0) return;
+  const step = () => {
+    const h = game.history.pop();
+    unmakeMove(game.board, h.move, h.captured);
+    game.turn = 1 - game.turn;
+  };
+  step();
+  // Chơi với máy: lùi thêm nước của máy để về lượt người
+  if (game.mode === 'ai' && game.turn === BLACK && game.history.length > 0) step();
+  clearSelection();
+  refreshStatus();
+  render();
+}
+
+$('btnNew').addEventListener('click', newGame);
+$('btnUndo').addEventListener('click', undo);
+$('btnMode').addEventListener('click', () => {
+  if (game.thinking) return;
+  game.mode = game.mode === 'ai' ? 'pvp' : 'ai';
+  clearSelection();
+  render();
+  maybeAiMove();
+});
+$('selLevel').addEventListener('change', e => { game.level = e.target.value; });
+
+newGame();
+</script>
+</body>
+</html>
