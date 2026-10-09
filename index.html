@@ -4,7 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#14100d">
+<meta name="apple-mobile-web-app-title" content="Cờ Tướng">
 <title>Cờ Tướng - Xiangqi</title>
+<!-- Favicon được sinh bằng JS (khối ui, đối tượng Favicon): SVG cho tab, PNG cho Safari và iOS -->
+<link rel="icon" id="favPng" type="image/png" sizes="32x32">
+<link rel="icon" id="favSvg" type="image/svg+xml">
+<link rel="apple-touch-icon" id="favApple" sizes="180x180">
 <style>
   :root {
     --bg1: #1d1711;
@@ -923,6 +928,82 @@ const Sound = {
   },
 };
 
+// ---- Favicon theo trạng thái ván -------------------------------------------
+// Icon là quân Tướng đỏ vẽ bằng SVG, kèm huy hiệu ở góc theo tình huống (xem
+// BADGES). SVG dùng cho tab các trình duyệt hiện đại; PNG 32px (vẽ qua canvas)
+// cho Safari và trình duyệt cũ; PNG 180px nền gỗ cho icon màn hình chính iOS.
+// Tất cả là data URL nên không cần file ngoài. Tiêu đề tab đổi theo cùng trạng thái.
+const Favicon = {
+  BADGES: { // key -> [màu, ký tự]
+    turn: ['#e0b964', ''], think: ['#42a5f5', ''], check: ['#e53935', '!'],
+    win: ['#43a047', '✓'], lose: ['#757575', '✕'], draw: ['#ffb74d', '='],
+    red: ['#c62828', ''], black: ['#222', ''],
+  },
+  FONT: 'KaiTi,STKaiti,&quot;Kaiti SC&quot;,BiauKai,&quot;Noto Serif CJK SC&quot;,&quot;Microsoft YaHei&quot;,serif',
+  cache: {},     // key -> { svg, png }
+  current: null,
+  svg(key, bg) {
+    const badge = this.BADGES[key];
+    let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">`;
+    s += `<defs><radialGradient id="g" cx=".38" cy=".32" r=".8"><stop offset="0" stop-color="#fffaeb"/><stop offset=".55" stop-color="#f3dfb2"/><stop offset="1" stop-color="#d2ad6e"/></radialGradient></defs>`;
+    if (bg) s += `<rect width="64" height="64" fill="#6b4320"/>`;
+    s += `<circle cx="32" cy="32" r="29" fill="url(#g)" stroke="#7a4b1d" stroke-width="3"/>`;
+    s += `<circle cx="32" cy="32" r="23" fill="none" stroke="#c62828" stroke-width="2" opacity=".85"/>`;
+    s += `<text x="32" y="34" font-size="30" font-weight="700" font-family="${this.FONT}" fill="#c62828" text-anchor="middle" dominant-baseline="central">帥</text>`;
+    if (badge) {
+      s += `<circle cx="51" cy="13" r="12" fill="${badge[0]}" stroke="#fff" stroke-width="2.5"/>`;
+      if (badge[1]) s += `<text x="51" y="14" font-size="17" font-weight="700" font-family="Arial,sans-serif" fill="#fff" text-anchor="middle" dominant-baseline="central">${badge[1]}</text>`;
+    }
+    return s + '</svg>';
+  },
+  dataUrl(svg) { return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); },
+  // Vẽ SVG lên canvas để lấy PNG (bất đồng bộ vì phải chờ ảnh nạp)
+  toPng(svg, size, cb) {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = c.height = size;
+        c.getContext('2d').drawImage(img, 0, 0, size, size);
+        cb(c.toDataURL('image/png'));
+      } catch (e) { /* bỏ qua: vẫn còn icon SVG */ }
+    };
+    img.src = this.dataUrl(svg);
+  },
+  init() {
+    this.toPng(this.svg(null, true), 180, url => { $('favApple').href = url; });
+  },
+  set(key, label) {
+    document.title = (label ? label + ' · ' : '') + 'Cờ Tướng';
+    if (key === this.current) return;
+    this.current = key;
+    let e = this.cache[key];
+    if (!e) {
+      const svg = this.svg(key, false);
+      e = this.cache[key] = { svg: this.dataUrl(svg), png: null };
+      this.toPng(svg, 32, url => { e.png = url; if (this.current === key) $('favPng').href = url; });
+    }
+    $('favSvg').href = e.svg;
+    if (e.png) $('favPng').href = e.png;
+  },
+};
+
+// Trạng thái để hiện trên favicon và tiêu đề tab
+function faviconState(st, isAi) {
+  if (st.over) {
+    if (st.winner === null) return ['draw', 'Hòa'];
+    if (isAi) return st.winner === RED ? ['win', 'Bạn thắng'] : ['lose', 'Máy thắng'];
+    return ['win', COLOR_NAME[st.winner] + ' thắng'];
+  }
+  if (isAi) {
+    if (game.thinking) return ['think', 'Máy đang nghĩ'];
+    if (st.inCheck) return ['check', 'Chiếu tướng!'];
+    return ['turn', 'Đến lượt bạn'];
+  }
+  if (st.inCheck) return ['check', COLOR_NAME[game.turn] + ' bị chiếu'];
+  return game.turn === RED ? ['red', 'Lượt Đỏ'] : ['black', 'Lượt Đen'];
+}
+
 // ---- Trạng thái ván cờ ----------------------------------------------------
 const game = {
   board: null,
@@ -1215,6 +1296,7 @@ function renderPanel(v) {
     else if (isAi && game.aiInfo) html += ` <span class="ai-info">Máy nghĩ sâu ${game.aiInfo.depth} · ${Math.round(game.aiInfo.nodes / 1000)}k nút · ${(game.aiInfo.ms / 1000).toFixed(1)}s</span>`;
     sEl.innerHTML = html;
   }
+  Favicon.set(...faviconState(st, isAi));
   // Lớp phủ kết thúc (ẩn khi đang xem lại để có thể xem bàn cờ)
   const ov = $('overlay');
   ov.hidden = !st.over || !v.live;
@@ -1454,6 +1536,7 @@ try {
 } catch (e) { /* bỏ qua */ }
 
 initSvg();
+Favicon.init();
 Engine.start();
 newGame();
 </script>
